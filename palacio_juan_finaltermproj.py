@@ -9,6 +9,11 @@ Original file is located at
 ### 1. Import Lib & Dataset
 """
 
+# Adding the script in case Prof or TA need it.
+
+#!pip install tensorflow
+#from tensorflow.keras.optimizers import Adam # import Adam optimizer
+
 # Core Libraries
 import pandas as pd
 import numpy as np
@@ -21,12 +26,13 @@ from sklearn.model_selection import train_test_split, StratifiedKFold, KFold, Gr
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc
+from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc, brier_score_loss, roc_auc_score
 
 # TensorFlow / Keras
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv1D, Dense, Flatten, MaxPooling1D
+from tensorflow.keras.layers import Conv1D, Dense, Flatten, MaxPooling1D, Input
 from tensorflow.keras.utils import to_categorical
+
 
 cervic = pd.read_csv('cervical_cancer_risk_classification.csv')
 
@@ -220,7 +226,7 @@ y = cervic['Biopsy']  # Target variable
 
 # Perform train-test split with 10% test size and stratification
 features_train_all, features_test_all, labels_train_all, labels_test_all = train_test_split(
-    features, labels, test_size=0.1, random_state=21, stratify=labels
+    X, y, test_size=0.1, random_state=21, stratify=y
 )
 
 # Reset indices for the training and testing sets
@@ -344,139 +350,123 @@ print(f"Best Conv1D Model Accuracy: {best_accuracy:.4f}")
 
 """### 10-Fold Cross Validation"""
 
-# Ensure the metrics list in get_metrics matches the metric_columns definition
-def calc_metrics(conf_matrix):
+from sklearn.model_selection import StratifiedKFold
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import confusion_matrix, brier_score_loss, roc_auc_score
+from keras.models import Sequential
+from keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Input
+import pandas as pd
+import numpy as np
 
+# Define the metrics calculation function
+def calc_metrics(conf_matrix):
     TP, FN = conf_matrix[0][0], conf_matrix[0][1]
     FP, TN = conf_matrix[1][0], conf_matrix[1][1]
-    TPR = TP / (TP + FN) if (TP + FN) > 0 else 0  # True Positive Rate
-    TNR = TN / (TN + FP) if (TN + FP) > 0 else 0  # True Negative Rate
-    FPR = FP / (TN + FP) if (TN + FP) > 0 else 0  # False Positive Rate
-    FNR = FN / (TP + FN) if (TP + FN) > 0 else 0  # False Negative Rate
-    Precision = TP / (TP + FP) if (TP + FP) > 0 else 0  # Precision
-    F1_measure = 2 * TP / (2 * TP + FP + FN) if (2 * TP + FP + FN) > 0 else 0  # F1 Score
-    Accuracy = (TP + TN) / (TP + FP + FN + TN)  # Accuracy
-    Error_rate = (FP + FN) / (TP + FP + FN + TN)  # Error Rate
-    BACC = (TPR + TNR) / 2  # Balanced Accuracy
-    TSS = TPR - FPR  # True Skill Statistic
-    HSS = 2 * (TP * TN - FP * FN) / ((TP + FN) * (FN + TN) + (TP + FP) * (FP + TN)) if ((TP + FN) * (FN + TN) + (TP + FP) * (FP + TN)) > 0 else 0  # Heidke Skill Score
-
+    TPR = TP / (TP + FN) if (TP + FN) > 0 else 0
+    TNR = TN / (TN + FP) if (TN + FP) > 0 else 0
+    FPR = FP / (TN + FP) if (TN + FP) > 0 else 0
+    FNR = FN / (TP + FN) if (TP + FN) > 0 else 0
+    Precision = TP / (TP + FP) if (TP + FP) > 0 else 0
+    F1_measure = 2 * TP / (2 * TP + FP + FN) if (2 * TP + FP + FN) > 0 else 0
+    Accuracy = (TP + TN) / (TP + FP + FN + TN)
+    Error_rate = (FP + FN) / (TP + FP + FN + TN)
+    BACC = (TPR + TNR) / 2
+    TSS = TPR - FPR
+    HSS = 2 * (TP * TN - FP * FN) / ((TP + FN) * (FN + TN) + (TP + FP) * (FP + TN)) if ((TP + FN) * (FN + TN) + (TP + FP) * (FP + TN)) > 0 else 0
     return [TP, TN, FP, FN, TPR, TNR, FPR, FNR, Precision, F1_measure, Accuracy, Error_rate, BACC, TSS, HSS]
 
+# Define the function to calculate metrics for a given model
 def get_metrics(model, X_train, X_test, y_train, y_test, Conv1D_flag=False):
-
     metrics = []
 
     if Conv1D_flag:
-        # Convert data to numpy array and reshape for Conv1D input
-        X_train, X_test, y_train, y_test = map(np.array, [X_train, X_test, y_train, y_test])
+        # Prepare Conv1D data
+        X_train, X_test = map(np.array, [X_train, X_test])
         X_train_reshaped = X_train.reshape(len(X_train), X_train.shape[1], 1)
         X_test_reshaped = X_test.reshape(len(X_test), X_test.shape[1], 1)
 
-        # Train the Conv1D model
+        # Train Conv1D model
         model.fit(X_train_reshaped, y_train, epochs=5, batch_size=32, verbose=0)
 
         # Predictions and metrics
-        predict_prob = model.predict(X_test_reshaped)
+        predict_prob = model.predict(X_test_reshaped).flatten()
         pred_labels = (predict_prob > 0.5).astype(int)
         conf_matrix = confusion_matrix(y_test, pred_labels, labels=[1, 0])
-
-        conv1d_brier_score = brier_score_loss(y_test, predict_prob)
-        conv1d_roc_auc = roc_auc_score(y_test, predict_prob)
+        brier_score = brier_score_loss(y_test, predict_prob)
+        roc_auc = roc_auc_score(y_test, predict_prob)
 
         metrics.extend(calc_metrics(conf_matrix))
-        metrics.extend([conv1d_brier_score, conv1d_roc_auc])
+        metrics.extend([brier_score, roc_auc])
 
     else:
-        # Train the Random Forest or KNN model
+        # Train traditional model
         model.fit(X_train, y_train)
-
-        # Predictions and metrics
+        predict_prob = model.predict_proba(X_test)[:, 1]
         predicted = model.predict(X_test)
-        predict_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else None
         conf_matrix = confusion_matrix(y_test, predicted, labels=[1, 0])
-
-        model_brier_score = brier_score_loss(y_test, predict_prob) if predict_prob is not None else None
-        model_roc_auc = roc_auc_score(y_test, predict_prob) if predict_prob is not None else None
+        brier_score = brier_score_loss(y_test, predict_prob)
+        roc_auc = roc_auc_score(y_test, predict_prob)
 
         metrics.extend(calc_metrics(conf_matrix))
-        metrics.extend([model_brier_score, model_roc_auc])
+        metrics.extend([brier_score, roc_auc])
 
     return metrics
 
-# Correct the metric_columns definition to match get_metrics output
+# Initialize variables
+cv_stratified = StratifiedKFold(n_splits=10, shuffle=True, random_state=21)
 metric_columns = ['TP', 'TN', 'FP', 'FN', 'TPR', 'TNR', 'FPR', 'FNR', 'Precision',
                   'F1_measure', 'Accuracy', 'Error_rate', 'BACC', 'TSS', 'HSS',
                   'Brier_score', 'AUC']
-
-# Initialize metrics lists for each algorithm
 knn_metrics_list, rf_metrics_list, conv1d_metrics_list = [], [], []
 
-# Best parameters (use your tuned hyperparameters)
-best_n_neighbors = 5  # Example for KNN
-best_rf_params = {'n_estimators': 100, 'min_samples_split': 2}  # Example for Random Forest
+# Define the best hyperparameters
+best_n_neighbors = 5
+best_rf_params = {'n_estimators': 100, 'min_samples_split': 2, 'min_samples_leaf': 1}
 
-# Perform Stratified 10-Fold Cross-Validation
+# Perform cross-validation
 for iter_num, (train_index, test_index) in enumerate(cv_stratified.split(features_train_all_std, labels_train_all), start=1):
-    # Split data into training and testing sets for this fold
     features_train, features_test = features_train_all_std.iloc[train_index, :], features_train_all_std.iloc[test_index, :]
     labels_train, labels_test = labels_train_all.iloc[train_index], labels_train_all.iloc[test_index]
 
-    # KNN Model
+    # KNN
     knn_model = KNeighborsClassifier(n_neighbors=best_n_neighbors)
     knn_metrics = get_metrics(knn_model, features_train, features_test, labels_train, labels_test, Conv1D_flag=False)
     knn_metrics_list.append(knn_metrics)
 
-    # Random Forest Model
+    # Random Forest
     rf_model = RandomForestClassifier(**best_rf_params, random_state=21)
     rf_metrics = get_metrics(rf_model, features_train, features_test, labels_train, labels_test, Conv1D_flag=False)
     rf_metrics_list.append(rf_metrics)
 
-    # Conv1D Model
+    # Conv1D
     conv1d_model = Sequential([
         Input(shape=(features_train.shape[1], 1)),
         Conv1D(filters=32, kernel_size=3, activation='relu'),
         MaxPooling1D(pool_size=2),
         Flatten(),
         Dense(100, activation='relu'),
-        Dense(1, activation='sigmoid')  # Binary classification
+        Dense(1, activation='sigmoid')
     ])
     conv1d_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-
-    # Reshape input data for Conv1D
-    features_train_reshaped = features_train.values.reshape(features_train.shape[0], features_train.shape[1], 1)
-    features_test_reshaped = features_test.values.reshape(features_test.shape[0], features_test.shape[1], 1)
-
-    # Get metrics for Conv1D
-    conv1d_metrics = get_metrics(conv1d_model, features_train_reshaped, features_test_reshaped, labels_train, labels_test, Conv1D_flag=True)
+    conv1d_metrics = get_metrics(conv1d_model, features_train, features_test, labels_train, labels_test, Conv1D_flag=True)
     conv1d_metrics_list.append(conv1d_metrics)
 
-    # Combine metrics into a DataFrame for this fold
-    metrics_all_df = pd.DataFrame(
-        [knn_metrics, rf_metrics, conv1d_metrics],
-        columns=metric_columns,
-        index=['KNN', 'RF', 'Conv1D']
-    )
+    # Display iteration results
+    metrics_all_df = pd.DataFrame([knn_metrics, rf_metrics, conv1d_metrics], columns=metric_columns, index=['KNN', 'RF', 'Conv1D'])
+    print(f"\nIteration {iter_num}:\n")
+    print(metrics_all_df.round(2).T)
 
-    # Display metrics for all algorithms in this iteration
-    print(f"\nIteration {iter_num}: \n")
-    print(f"----- Metrics for all Algorithms in Iteration {iter_num} -----\n")
-    print(metrics_all_df.round(decimals=2).T)
-
-# Aggregate metrics across folds
-knn_avg_metrics = pd.DataFrame(knn_metrics_list, columns=metric_columns).mean()
-rf_avg_metrics = pd.DataFrame(rf_metrics_list, columns=metric_columns).mean()
-conv1d_avg_metrics = pd.DataFrame(conv1d_metrics_list, columns=metric_columns).mean()
-
-# Combine all average metrics into a final DataFrame
-final_metrics_df = pd.DataFrame(
-    [knn_avg_metrics, rf_avg_metrics, conv1d_avg_metrics],
-    columns=metric_columns,
-    index=['KNN', 'RF', 'Conv1D']
-)
+# Aggregate final results
+final_metrics_df = pd.DataFrame([
+    pd.DataFrame(knn_metrics_list, columns=metric_columns).mean(),
+    pd.DataFrame(rf_metrics_list, columns=metric_columns).mean(),
+    pd.DataFrame(conv1d_metrics_list, columns=metric_columns).mean()
+], index=['KNN', 'RF', 'Conv1D'])
 
 print("\nFinal Average Metrics Across Folds:\n")
-print(final_metrics_df.round(decimals=2).T)
+print(final_metrics_df.round(2).T)
 
 """#### Metrics"""
 
